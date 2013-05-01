@@ -6,6 +6,8 @@ import (
 	"log"
 	"net"
 	"net/textproto"
+	"regexp"
+	"strings"
 )
 
 type Bot struct {
@@ -28,23 +30,33 @@ func (b *Bot) Connect() {
 		panic(err)
 	}
 
+	pingRegex, _ := regexp.Compile("PING :(.*)$")
+
 	reader := bufio.NewReader(conn)
 	tp := textproto.NewReader(reader)
 
 	// identify bot
 	b.Identify()
 	// join channel
-	b.Join()
 
+	// go func() {
 	for {
 		line, _ := tp.ReadLine()
 		log.Printf("%s\n", line)
+		if pingRegex.Match([]byte(line)) {
+			text := strings.Replace(line, "PING", "PONG", 1)
+			fmt.Fprintf(b.conn, "%s\r\n", text)
+		}
+		b.Join()
 	}
+	// }()
+
 }
 
 func (b *Bot) Identify() {
+	// fmt.Fprintf(b.conn, "PASS irc.foonet.com\r\n")
 	fmt.Fprintf(b.conn, "NICK %s\r\n", b.username)
-	fmt.Fprintf(b.conn, "USER %s * * :%s\r\n", b.ident, b.realname)
+	fmt.Fprintf(b.conn, "USER %s 1 1 1:%s\r\n", b.ident, b.realname)
 }
 
 func (b *Bot) Join() {
@@ -57,8 +69,8 @@ func NewBot() *Bot {
 		username: "botko",
 		realname: "Testbot",
 		ident:    "testbot",
-		channel:  "#blablatesting",
-		server:   "irc.freenode.net",
+		channel:  "#test",
+		server:   "irc.foonet.com",
 		port:     "6667",
 		conn:     nil,
 	}
@@ -67,4 +79,5 @@ func NewBot() *Bot {
 func main() {
 	bot := NewBot()
 	bot.Connect()
+	bot.Join()
 }
