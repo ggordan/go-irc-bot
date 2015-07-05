@@ -13,13 +13,17 @@ import (
 var pingRegex = regexp.MustCompile("PING :(.*)$")
 
 type Bot struct {
-	port     string
+	port     int
 	server   string
 	username string
 	realname string
 	channel  string
 	ident    string
 	conn     net.Conn
+}
+
+func (b Bot) close() {
+	b.conn.Close()
 }
 
 // listenToIRCMessages returns the channel which receives lines from the irc connection
@@ -44,13 +48,13 @@ func listenToIRCMessages(conn net.Conn) <-chan []byte {
 	return c
 }
 
-// Connect to the IRC server
-func (b *Bot) Connect() error {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", b.server, b.port))
+// Connect to the IRC server and returns a channel
+func (b *Bot) Connect() (<-chan []byte, error) {
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", b.server, b.port))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer conn.Close()
+	b.conn = conn
 
 	// Identify the bot
 	fmt.Fprintf(conn, "NICK %s\r\n", b.username)
@@ -58,34 +62,48 @@ func (b *Bot) Connect() error {
 	// Join the provided channel
 	fmt.Fprintf(conn, "JOIN %s\r\n", b.channel)
 
-	c := listenToIRCMessages(conn)
+	return listenToIRCMessages(conn), nil
+}
+
+// NewBot returns a new Bot
+func NewBot(userName, realName, ident, channel, server string, port int) *Bot {
+	return &Bot{
+		username: userName,
+		realname: realName,
+		ident:    ident,
+		channel:  channel,
+		server:   server,
+		port:     port,
+	}
+}
+
+func main() {
+
+	// Bot 1
+	bot1 := NewBot("botko1", "botko1", "botko1", "#ggtst", "irc.freenode.net", 6667)
+	botChan1, err := bot1.Connect()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer bot1.close()
+
+	// Bot 2
+	bot2 := NewBot("botko2", "botko2", "botko2", "#ggtst", "irc.freenode.net", 6667)
+	botChan2, err := bot2.Connect()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer bot2.close()
 
 	for {
 		select {
-		case line := <-c:
-			log.Printf("Bot said: %q", line)
+		case line := <-botChan1:
+			log.Printf("Bot 1 said: %q", line)
+		case line := <-botChan2:
+			log.Printf("Bot 2 said: %q", line)
 		case <-time.After(time.Second * 5):
 			log.Println("No lines to report in the last 5 seconds")
 		}
 	}
 
-}
-
-// NewBot returns a new Bot
-func NewBot() *Bot {
-	return &Bot{
-		username: "botko",
-		realname: "Testbot",
-		ident:    "testbot",
-		channel:  "#ggtst",
-		server:   "irc.freenode.com",
-		port:     "6667",
-		conn:     nil,
-	}
-}
-
-func main() {
-	if err := NewBot().Connect(); err != nil {
-		log.Fatal(err)
-	}
 }
