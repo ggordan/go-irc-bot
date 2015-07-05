@@ -2,13 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"log"
 	"net"
-	"net/textproto"
 	"regexp"
-	"strings"
+	"time"
 )
+
+var pingRegex = regexp.MustCompile("PING :(.*)$")
 
 type Bot struct {
 	port     string
@@ -20,64 +22,70 @@ type Bot struct {
 	conn     net.Conn
 }
 
-func (b *Bot) Connect() {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", b.server, b.port))
-	b.conn = conn
-
-	defer b.conn.Close()
-
-	if err != nil {
-		panic(err)
-	}
-
-	pingRegex, _ := regexp.Compile("PING :(.*)$")
-
+// listenToIRCMessages returns the channel which receives lines from the irc connection
+func listenToIRCMessages(conn net.Conn) <-chan []byte {
+	c := make(chan []byte)
 	reader := bufio.NewReader(conn)
-	tp := textproto.NewReader(reader)
-
-	// identify bot
-	b.Identify()
-	// join channel
-
-	// go func() {
-	for {
-		line, _ := tp.ReadLine()
-		log.Printf("%s\n", line)
-		if pingRegex.Match([]byte(line)) {
-			text := strings.Replace(line, "PING", "PONG", 1)
-			fmt.Fprintf(b.conn, "%s\r\n", text)
+	var line []byte
+	var err error
+	go func() {
+		for {
+			if line, err = reader.ReadBytes('\n'); err != nil {
+				log.Println(err)
+			}
+			// send the line through the channel
+			c <- line
+			// respond to the server PING request with a PONG by doing a simple replace
+			if pingRegex.Match([]byte(line)) {
+				conn.Write(bytes.Replace(line, []byte("PING"), []byte("PONG"), 1))
+			}
 		}
-		b.Join()
+	}()
+	return c
+}
+
+// Connect to the IRC server
+func (b *Bot) Connect() error {
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%s", b.server, b.port))
+	if err != nil {
+		return err
 	}
-	// }()
+	defer conn.Close()
+
+	// Identify the bot
+	fmt.Fprintf(conn, "NICK %s\r\n", b.username)
+	fmt.Fprintf(conn, "USER %s 1 1 1:%s\r\n", b.ident, b.realname)
+	// Join the provided channel
+	fmt.Fprintf(conn, "JOIN %s\r\n", b.channel)
+
+	c := listenToIRCMessages(conn)
+
+	for {
+		select {
+		case line := <-c:
+			log.Printf("Bot said: %q", line)
+		case <-time.After(time.Second * 5):
+			log.Println("No lines to report in the last 5 seconds")
+		}
+	}
 
 }
 
-func (b *Bot) Identify() {
-	// fmt.Fprintf(b.conn, "PASS irc.foonet.com\r\n")
-	fmt.Fprintf(b.conn, "NICK %s\r\n", b.username)
-	fmt.Fprintf(b.conn, "USER %s 1 1 1:%s\r\n", b.ident, b.realname)
-}
-
-func (b *Bot) Join() {
-	fmt.Fprintf(b.conn, "JOIN %s\r\n", b.channel)
-}
-
-// Bot constructor
+// NewBot returns a new Bot
 func NewBot() *Bot {
 	return &Bot{
 		username: "botko",
 		realname: "Testbot",
 		ident:    "testbot",
-		channel:  "#test",
-		server:   "irc.foonet.com",
+		channel:  "#ggtst",
+		server:   "irc.freenode.com",
 		port:     "6667",
 		conn:     nil,
 	}
 }
 
 func main() {
-	bot := NewBot()
-	bot.Connect()
-	bot.Join()
+	if err := NewBot().Connect(); err != nil {
+		log.Fatal(err)
+	}
 }
